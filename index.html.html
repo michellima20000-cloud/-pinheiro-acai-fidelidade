@@ -582,8 +582,8 @@ body{font-family:'Nunito',sans-serif;background:var(--off-white);color:var(--tex
     <button class="nav-item active" onclick="showPage('dash')"><span class="nav-icon">🏠</span>Início</button>
     <button class="nav-item" onclick="showPage('rewards')"><span class="nav-icon">🎁</span>Prêmios</button>
     <button class="nav-item" onclick="showPage('qr')"><span class="nav-icon">📲</span>QR</button>
-    <button class="nav-item" onclick="showPage('contact')"><span class="nav-icon">📞</span>Contato</button>
     <button class="nav-item" onclick="checkAdmin()" style="color:var(--acai);"><span class="nav-icon">⚙️</span><b>Admin</b></button>
+    <button class="nav-item" onclick="confirmarSaida()" style="color:#c0392b;"><span class="nav-icon">🚪</span><b>Sair</b></button>
   </nav>
 </div>
 
@@ -783,6 +783,12 @@ function desenharQR() {
   });
   const el=document.getElementById('qrId');
   if(el) el.textContent='PIN-'+uid.substring(0,8).toUpperCase();
+}
+
+function confirmarSaida() {
+  if (confirm('Deseja sair da sua conta?')) {
+    fazerLogout();
+  }
 }
 
 function mostrarToast(msg) {
