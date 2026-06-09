@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<title>Pinheiro Açaí – Fidelidade</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, addDoc, collection, query, where, orderBy, getDocs, updateDoc, increment, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCLfYN3AQ-W9sIaSKyO8SxnVXCfFNpHCJc",
+  authDomain: "pinheiro-acai-fidelidade.firebaseapp.com",
+  databaseURL: "https://pinheiro-acai-fidelidade-default-rtdb.firebaseio.com",
+  projectId: "pinheiro-acai-fidelidade",
+  storageBucket: "pinheiro-acai-fidelidade.firebasestorage.app",
+  messagingSenderId: "90328553377",
+  appId: "1:90328553377:web:557c85bf24f61d28b29de0",
+  measurementId: "G-NYKGR9K52J"
+};
+
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+const auth = getAuth(app);
+
+// ── helpers globais ──
+window._db   = db;
+window._auth = auth;
+window._fb   = { doc, getDoc, setDoc, addDoc, collection, query, where, orderBy, getDocs, updateDoc, increment, serverTimestamp, signOut, GoogleAuthProvider, signInWithPopup };
+
+// ── observar estado de autenticação ──
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    window._uid = user.uid;
+    await carregarOuCriarCliente(user);
+    mostrarApp();
+  } else {
+    mostrarLogin();
+  }
+});
+
+function mostrarApp() {
+  document.getElementById('loadingOverlay').style.display = 'none';
+  document.getElementById('loginPage').style.display    = 'none';
+  document.getElementById('mainApp').style.display      = 'block';
+}
+function mostrarLogin() {
+  document.getElementById('loadingOverlay').style.display = 'none';
+  document.getElementById('loginPage').style.display    = 'flex';
+  document.getElementById('mainApp').style.display      = 'none';
+  document.getElementById('adminPage').style.display    = 'none';
+}
+
+// ── carregar ou criar cliente no Firestore ──
+async function carregarOuCriarCliente(user) {
+  const ref  = doc(db, 'clientes', user.uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    const nome = user.displayName || window._nomeLogin || 'Cliente';
+    const fone = user.phoneNumber  || window._foneLogin || '';
+    const novo = { nome, fone, pontos:0, compras:0, totalGasto:0, ultimaCompra:'-', cadastro: new Date().toLocaleDateString('pt-BR'), uid: user.uid };
+    await setDoc(ref, novo);
+    window._cliente = novo;
+  } else {
+    window._cliente = snap.data();
+  }
+  window.atualizarUI();
+  await window._carregarHistorico();
+  await window._carregarRanking();
+}
+
+// ── LOGIN GOOGLE ──
+window.loginGoogle = async () => {
+  try {
+    window.mostrarLoading('Entrando com Google…');
+    const prov = new GoogleAuthProvider();
+    await signInWithPopup(auth, prov);
+  } catch(e) { window.esconderLoading(); window.mostrarToast('❌ ' + e.message); }
+};
+
+// ── LOGIN MANUAL (telefone) ──
+window.loginManual = async () => {
+  const nome = document.getElementById('loginName').value.trim();
+  const fone = document.getElementById('loginPhone').value.trim();
+  if (!nome || !fone) { window.mostrarToast('⚠️ Preencha nome e telefone!'); return; }
+  window._nomeLogin = nome;
+  window._foneLogin = fone;
+  try {
+    window.mostrarLoading('Entrando…');
+    const q    = query(collection(db,'clientes'), where('fone','==',fone));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      window._cliente = snap.docs[0].data();
+      window._uid     = snap.docs[0].id;
+    } else {
+      const uid = 'fone_' + fone.replace(/\D/g,'');
+      window._uid = uid;
+      const novo = { nome, fone, pontos:0, compras:0, totalGasto:0, ultimaCompra:'-', cadastro: new Date().toLocaleDateString('pt-BR'), uid };
+      await setDoc(doc(db,'clientes',uid), novo);
+      window._cliente = novo;
+    }
+    window.atualizarUI();
+    await window._carregarHistorico();
+    await window._carregarRanking();
+    window.esconderLoading();
+    mostrarApp();
+    window.mostrarToast('Bem-vindo(a), ' + window._cliente.nome.split(' ')[0] + '! 🎉');
+  } catch(e) { window.esconderLoading(); window.mostrarToast('❌ ' + e.message); }
+};
+
+// ── LOGOUT ──
+window.fazerLogout = async () => {
+  try { await signOut(auth); } catch(_){}
+  window._uid = null; window._cliente = null;
+  mostrarLogin();
+  window.mostrarToast('Até logo! 👋');
+};
+
+// ── HISTÓRICO ──
+window._carregarHistorico = async () => {
+  const tbody = document.getElementById('historyBody');
+  if (!tbody) return;
+  try {
+    const q    = query(collection(db,'compras'), where('uid','==',window._uid), orderBy('data','desc'));
+    const snap = await getDocs(q);
+    if (snap.empty) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#6b5b8a;">Nenhuma compra ainda</td></tr>'; return; }
+    tbody.innerHTML = snap.docs.map(d => {
+      const c = d.data();
+      const dt = c.data?.toDate ? c.data.toDate().toLocaleDateString('pt-BR') : (c.dataStr||'-');
+      const badge = c.pontos >= 0
+        ? `<span class="pts-badge">+${c.pontos}</span>`
+        : `<span class="pts-badge" style="background:#ffe8e8;color:#c0392b;">${c.pontos}</span>`;
+      return `<tr><td><span class="date-chip">${dt}</span></td><td><span class="product-chip">${c.produto||'-'}</span></td><td>R$${Number(c.valor||0).toFixed(2).replace('.',',')}</td><td>${badge}</td></tr>`;
+    }).join('');
+  } catch(e) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#c0392b;">Erro ao carregar</td></tr>'; }
+};
+
+// ── RANKING ──
+window._carregarRanking = async () => {
+  const div = document.getElementById('rankingList');
+  if (!div) return;
+  try {
+    const q    = query(collection(db,'clientes'), orderBy('pontos','desc'));
+    const snap = await getDocs(q);
+    const medals = ['🥇','🥈','🥉'];
+    div.innerHTML = snap.docs.slice(0,10).map((d,i) => {
+      const c = d.data(), isMe = d.id === window._uid;
+      return `<div class="ranking-item${isMe?' minha-pos':''}">
+        <div class="rank-number">${medals[i]||i+1+'°'}</div>
+        <div class="rank-avatar${isMe?' meu-avatar':''}">${c.nome.substring(0,2).toUpperCase()}</div>
+        <div class="rank-info"><div class="rank-name">${c.nome}${isMe?' (você)':''}</div><div class="rank-detail">${c.compras||0} compras · R$${c.totalGasto||0}</div></div>
+        <div class="rank-pts-badge">${c.pontos||0} pts</div>
+      </div>`;
+    }).join('');
+  } catch(e) { div.innerHTML = '<p style="text-align:center;padding:20px;color:#c0392b;">Erro ao carregar ranking</p>'; }
+};
+
+// ── ADMIN: REGISTRAR COMPRA ──
+window.adminRegistrarCompra = async () => {
+  const fone    = document.getElementById('adminPhone').value.trim();
+  const produto = document.getElementById('adminProduct').value;
+  const valor   = parseFloat(document.getElementById('adminValue').value) || 0;
+  if (!fone||!produto||!valor) { window.mostrarToast('⚠️ Preencha todos os campos!'); return; }
+  try {
+    window.mostrarLoading('Registrando…');
+    const q    = query(collection(db,'clientes'), where('fone','==',fone));
+    const snap = await getDocs(q);
+    if (snap.empty) { window.esconderLoading(); window.mostrarToast('❌ Cliente não encontrado!'); return; }
+    const cDoc = snap.docs[0];
+    const pts  = Math.floor(valor/10);
+    await addDoc(collection(db,'compras'), { uid:cDoc.id, produto, valor, pontos:pts, data:serverTimestamp(), dataStr:new Date().toLocaleDateString('pt-BR') });
+    await updateDoc(doc(db,'clientes',cDoc.id), { pontos:increment(pts), compras:increment(1), totalGasto:increment(valor), ultimaCompra:new Date().toLocaleDateString('pt-BR') });
+    window.esconderLoading();
+    window.mostrarToast(`✅ +${pts} ponto(s) para ${cDoc.data().nome.split(' ')[0]}!`);
+    document.getElementById('adminPhone').value=''; document.getElementById('adminProduct').value=''; document.getElementById('adminValue').value='';
+    window.carregarStatsAdmin();
+  } catch(e) { window.esconderLoading(); window.mostrarToast('❌ '+e.message); }
+};
+
+// ── ADMIN: CADASTRAR CLIENTE ──
+window.adminCadastrarCliente = async () => {
+  const nome = document.getElementById('newClientName').value.trim();
+  const fone = document.getElementById('newClientPhone').value.trim();
+  if (!nome||!fone) { window.mostrarToast('⚠️ Preencha nome e telefone!'); return; }
+  try {
+    window.mostrarLoading('Cadastrando…');
+    const uid = 'fone_'+fone.replace(/\D/g,'');
+    await setDoc(doc(db,'clientes',uid), { nome, fone, pontos:0, compras:0, totalGasto:0, ultimaCompra:'-', cadastro:new Date().toLocaleDateString('pt-BR'), uid });
+    window.esconderLoading();
+    window.mostrarToast('✅ '+nome+' cadastrado(a)!');
+    document.getElementById('newClientName').value=''; document.getElementById('newClientPhone').value='';
+    window.carregarStatsAdmin();
+  } catch(e) { window.esconderLoading(); window.mostrarToast('❌ '+e.message); }
+};
+
+// ── ADMIN: PONTOS MANUAIS ──
+window.adminPontosManual = async () => {
+  const fone = document.getElementById('manualPhone').value.trim();
+  const op   = document.getElementById('manualOp').value;
+  const pts  = parseInt(document.getElementById('manualPts').value)||0;
+  if (!fone||!pts) { window.mostrarToast('⚠️ Preencha telefone e pontos!'); return; }
+  try {
+    window.mostrarLoading('Aplicando…');
+    const q    = query(collection(db,'clientes'), where('fone','==',fone));
+    const snap = await getDocs(q);
+    if (snap.empty) { window.esconderLoading(); window.mostrarToast('❌ Cliente não encontrado!'); return; }
+    const uid   = snap.docs[0].id;
+    const delta = op==='add' ? pts : -pts;
+    await updateDoc(doc(db,'clientes',uid), { pontos:increment(delta) });
+    await addDoc(collection(db,'compras'), { uid, produto: op==='add'?'⭐ Pontos bônus':'🎁 Resgate de prêmio', valor:0, pontos:delta, data:serverTimestamp(), dataStr:new Date().toLocaleDateString('pt-BR') });
+    window.esconderLoading();
+    window.mostrarToast((delta>0?'+':'')+delta+' pontos aplicados!');
+    document.getElementById('manualPhone').value=''; document.getElementById('manualPts').value='';
+    window.carregarStatsAdmin();
+  } catch(e) { window.esconderLoading(); window.mostrarToast('❌ '+e.message); }
+};
+
+// ── ADMIN: STATS ──
+window.carregarStatsAdmin = async () => {
+  try {
+    const cSnap  = await getDocs(collection(db,'clientes'));
+    const coSnap = await getDocs(collection(db,'compras'));
+    let totalPts=0, totalGasto=0;
+    cSnap.forEach(d=>{ totalPts+=d.data().pontos||0; totalGasto+=d.data().totalGasto||0; });
+    document.getElementById('statClientes').textContent = cSnap.size;
+    document.getElementById('statCompras').textContent  = coSnap.size;
+    document.getElementById('statPontos').textContent   = totalPts;
+    document.getElementById('statGasto').textContent    = 'R$'+totalGasto.toFixed(0);
+  } catch(_){}
+};
+</script>
+
+<style>
+:root{
+  --acai:#6A0DAD;--acai-dark:#4a0880;--acai-light:#9B3DD6;
+  --acai-pale:#F3E8FF;--verde:#32CD32;--verde-dark:#22a322;
+  --verde-pale:#E8FFE8;--off-white:#FAF8FF;
+  --text:#1a0a2e;--text-muted:#6b5b8a;
+  --border:rgba(106,13,173,0.15);
+  --shadow:0 8px 32px rgba(106,13,173,0.18);
+  --shadow-sm:0 2px 12px rgba(106,13,173,0.10);
+  --radius:18px;--radius-sm:12px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+input,button,select,textarea{-webkit-appearance:none;appearance:none;}
+body{font-family:'Nunito',sans-serif;background:var(--off-white);color:var(--text);min-height:100vh;}
+
+/* LOADING */
+#loadingOverlay{position:fixed;inset:0;background:linear-gradient(135deg,var(--acai-dark),var(--acai));display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;color:white;}
+.load-logo{font-size:4rem;animation:pulse 1.2s infinite;}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+.load-txt{font-family:'Poppins',sans-serif;font-weight:700;font-size:1rem;margin-top:16px;}
+.load-sub{font-size:0.8rem;opacity:0.7;margin-top:4px;}
+
+/* LOGIN */
+.login-page{min-height:100vh;background:linear-gradient(160deg,var(--acai-dark) 0%,var(--acai) 50%,var(--acai-light) 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 24px;}
+.login-logo{font-size:5rem;margin-bottom:8px;animation:bounce 2s infinite;}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.login-brand{font-family:'Poppins',sans-serif;font-weight:900;font-size:2rem;color:white;margin-bottom:4px;}
+.login-sub{font-size:0.9rem;color:rgba(255,255,255,0.75);margin-bottom:32px;}
+.login-card{background:white;border-radius:24px;padding:28px 24px;width:100%;max-width:360px;box-shadow:0 20px 60px rgba(0,0,0,0.25);}
+.login-card h3{font-family:'Poppins',sans-serif;font-weight:700;font-size:1rem;margin-bottom:16px;text-align:center;color:var(--text);}
+.login-input{border:2px solid var(--border);border-radius:12px;padding:13px 16px;font-family:'Nunito',sans-serif;font-size:16px;color:var(--text);background:white;outline:none;width:100%;margin-bottom:12px;display:block;transition:border-color .2s;}
+.login-input:focus{border-color:var(--acai);}
+.login-divider{display:flex;align-items:center;gap:10px;margin:14px 0;font-size:0.78rem;color:var(--text-muted);font-weight:700;}
+.login-divider::before,.login-divider::after{content:'';flex:1;height:1px;background:var(--border);}
+.btn-google{display:flex;align-items:center;justify-content:center;gap:10px;padding:12px;border-radius:12px;border:2px solid var(--border);background:white;cursor:pointer;font-family:'Poppins',sans-serif;font-weight:700;font-size:0.88rem;color:var(--text);width:100%;transition:all .2s;}
+.btn-google:active{background:var(--acai-pale);}
+
+/* HEADER */
+.site-header{background:linear-gradient(135deg,var(--acai-dark),var(--acai) 60%,var(--acai-light));position:sticky;top:0;z-index:100;box-shadow:0 4px 20px rgba(74,8,128,0.35);}
+.header-inner{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;max-width:480px;margin:0 auto;}
+.logo-circle{width:40px;height:40px;background:white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 2px 8px rgba(0,0,0,0.2);}
+.header-title{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.1rem;color:white;line-height:1;}
+.header-subtitle{font-size:0.72rem;color:rgba(255,255,255,0.75);font-weight:600;text-transform:uppercase;}
+.header-pts{background:rgba(255,255,255,0.2);border:1.5px solid rgba(255,255,255,0.4);border-radius:20px;padding:6px 14px;color:white;font-weight:800;font-size:0.85rem;}
+
+/* TABS */
+.tab-nav{background:white;border-bottom:1px solid var(--border);display:flex;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:480px;margin:0 auto;padding:0 8px;}
+.tab-nav::-webkit-scrollbar{display:none;}
+.tab-btn{flex:0 0 auto;padding:13px 16px;border:none;background:none;cursor:pointer;font-family:'Nunito',sans-serif;font-size:0.82rem;font-weight:700;color:var(--text-muted);border-bottom:3px solid transparent;white-space:nowrap;transition:all .2s;}
+.tab-btn.active{color:var(--acai);border-bottom-color:var(--acai);}
+
+/* PAGES */
+.page{display:none;max-width:480px;margin:0 auto;padding:20px 16px calc(90px + env(safe-area-inset-bottom));}
+.page.active{display:block;animation:fadeUp .3s ease;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+/* CARD */
+.card{background:white;border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow-sm);padding:20px;margin-bottom:16px;}
+.card-title{font-family:'Poppins',sans-serif;font-weight:700;font-size:0.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px;}
+
+/* LOYALTY CARD */
+.loyalty-card{background:linear-gradient(135deg,var(--acai-dark),var(--acai) 55%,var(--acai-light));border-radius:20px;padding:24px;color:white;position:relative;overflow:hidden;margin-bottom:16px;box-shadow:var(--shadow);}
+.loyalty-card::before{content:'';position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:rgba(255,255,255,0.07);border-radius:50%;}
+.lc-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;}
+.lc-name{font-family:'Poppins',sans-serif;font-size:1.15rem;font-weight:700;}
+.lc-since{font-size:0.73rem;opacity:0.7;margin-top:2px;}
+.lc-badge{background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.35);border-radius:30px;padding:5px 12px;font-size:0.72rem;font-weight:800;}
+.lc-badge.gold{background:rgba(255,215,0,0.25);border-color:rgba(255,215,0,0.5);color:#FFE566;}
+.lc-pts-big{font-family:'Poppins',sans-serif;font-size:2.6rem;font-weight:900;line-height:1;}
+.lc-pts-label{font-size:0.8rem;opacity:0.75;margin-bottom:16px;}
+.lc-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;}
+.lc-stat{background:rgba(255,255,255,0.12);border-radius:10px;padding:10px 8px;text-align:center;}
+.lc-stat-val{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.05rem;}
+.lc-stat-lab{font-size:0.65rem;opacity:0.7;margin-top:1px;}
+.progress-wrap{margin:14px 0 6px;}
+.progress-labels{display:flex;justify-content:space-between;font-size:0.75rem;font-weight:700;margin-bottom:6px;}
+.progress-track{height:12px;background:rgba(255,255,255,0.2);border-radius:20px;overflow:hidden;}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--verde),#7fff00);border-radius:20px;transition:width 1s cubic-bezier(.34,1.56,.64,1);}
+
+/* REWARDS */
+.reward-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.reward-card{background:white;border:2px solid var(--border);border-radius:var(--radius-sm);padding:16px 12px;text-align:center;transition:all .2s;position:relative;overflow:hidden;}
+.reward-card.unlocked{border-color:var(--verde);background:var(--verde-pale);}
+.reward-card.unlocked::before{content:'✓ Disponível';position:absolute;top:0;right:0;background:var(--verde);color:white;font-size:.6rem;font-weight:800;padding:3px 7px;border-radius:0 0 0 8px;}
+.reward-icon{font-size:2rem;margin-bottom:6px;}
+.reward-name{font-family:'Poppins',sans-serif;font-weight:700;font-size:.82rem;margin-bottom:4px;}
+.reward-pts{font-size:.75rem;font-weight:800;color:var(--acai);}
+.reward-progress-bar{height:5px;background:#eee;border-radius:10px;margin-top:8px;overflow:hidden;}
+.reward-progress-fill{height:100%;background:linear-gradient(90deg,var(--acai),var(--acai-light));border-radius:10px;transition:width 1s ease;}
+.reward-card.unlocked .reward-progress-fill{background:linear-gradient(90deg,var(--verde-dark),var(--verde));}
+
+/* HISTORY */
+.history-table{width:100%;border-collapse:collapse;font-size:.82rem;}
+.history-table th{text-align:left;padding:8px 10px;font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);}
+.history-table td{padding:11px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.history-table tr:last-child td{border-bottom:none;}
+.pts-badge{background:var(--acai-pale);color:var(--acai);font-weight:800;font-size:.72rem;padding:3px 8px;border-radius:20px;}
+.product-chip{font-weight:700;}
+.date-chip{color:var(--text-muted);font-size:.75rem;}
+
+/* RANKING */
+.ranking-item{display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:var(--radius-sm);margin-bottom:8px;background:white;border:1px solid var(--border);}
+.ranking-item:first-child{background:linear-gradient(135deg,#FFF8E1,#FFF3CD);border-color:rgba(255,193,7,0.4);}
+.minha-pos{border:2px solid var(--acai)!important;background:var(--acai-pale)!important;}
+.rank-number{font-family:'Poppins',sans-serif;font-weight:900;font-size:1.1rem;min-width:28px;color:var(--text-muted);}
+.rank-avatar{width:40px;height:40px;border-radius:50%;background:var(--acai-pale);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.9rem;color:var(--acai);border:2px solid var(--border);flex-shrink:0;}
+.meu-avatar{background:var(--acai)!important;color:white!important;border-color:var(--acai)!important;}
+.rank-info{flex:1;}
+.rank-name{font-weight:700;font-size:.88rem;}
+.rank-detail{font-size:.72rem;color:var(--text-muted);}
+.rank-pts-badge{background:var(--acai-pale);color:var(--acai);font-weight:800;font-size:.78rem;padding:4px 10px;border-radius:20px;}
+
+/* FORMS */
+.admin-form{display:flex;flex-direction:column;gap:12px;}
+.form-group{display:flex;flex-direction:column;gap:5px;}
+.form-label{font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;}
+.form-input{border:1.5px solid var(--border);border-radius:10px;padding:11px 14px;font-family:'Nunito',sans-serif;font-size:16px;color:var(--text);background:white;outline:none;width:100%;transition:border-color .2s;}
+.form-input:focus{border-color:var(--acai);}
+.form-select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236A0DAD' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:36px;}
+
+/* BUTTONS */
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 20px;border-radius:30px;border:none;cursor:pointer;font-family:'Poppins',sans-serif;font-weight:700;font-size:.88rem;transition:all .2s;width:100%;}
+.btn-primary{background:linear-gradient(135deg,var(--acai-dark),var(--acai-light));color:white;box-shadow:0 4px 15px rgba(106,13,173,0.35);}
+.btn-primary:active{transform:scale(.98);}
+.btn-green{background:linear-gradient(135deg,var(--verde-dark),var(--verde));color:white;box-shadow:0 4px 15px rgba(50,205,50,0.3);}
+.btn-outline{background:white;color:var(--acai);border:2px solid var(--acai);}
+.btn-wpp{background:linear-gradient(135deg,#128C7E,#25D366);color:white;box-shadow:0 4px 15px rgba(37,211,102,0.3);font-size:1rem;padding:16px 20px;}
+
+/* MISC */
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.section-title{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.1rem;}
+.section-pill{background:var(--acai-pale);color:var(--acai);font-size:.72rem;font-weight:800;padding:4px 10px;border-radius:20px;}
+.info-item{display:flex;align-items:center;gap:12px;padding:12px 16px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:8px;}
+.info-icon{width:38px;height:38px;background:var(--acai-pale);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;}
+.info-label{font-size:.7rem;color:var(--text-muted);font-weight:700;text-transform:uppercase;}
+.info-value{font-weight:700;font-size:.9rem;}
+.admin-header{background:linear-gradient(135deg,var(--acai-dark),var(--acai));color:white;text-align:center;padding:20px;border-radius:var(--radius);margin-bottom:16px;}
+.admin-header h2{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.1rem;}
+.admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
+.admin-stat-card{background:white;border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;text-align:center;}
+.admin-stat-card .stat-num{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.5rem;color:var(--acai);}
+.admin-stat-card .stat-lab{font-size:.7rem;color:var(--text-muted);font-weight:700;}
+.qr-wrap{display:flex;flex-direction:column;align-items:center;padding:20px;gap:12px;}
+.qr-box{background:white;border:3px solid var(--acai);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow-sm);}
+.qr-id{font-family:'Poppins',sans-serif;font-weight:800;font-size:1rem;color:var(--acai);letter-spacing:.1em;text-align:center;background:var(--acai-pale);padding:8px 20px;border-radius:30px;}
+
+/* BOTTOM NAV */
+.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:white;border-top:1px solid var(--border);display:flex;box-shadow:0 -4px 20px rgba(106,13,173,0.1);padding-bottom:env(safe-area-inset-bottom);}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:10px 4px 8px;cursor:pointer;border:none;background:none;color:var(--text-muted);font-size:.6rem;font-weight:700;font-family:'Nunito',sans-serif;transition:color .2s;gap:3px;}
+.nav-icon{font-size:1.4rem;}
+.nav-item.active{color:var(--acai);}
+
+/* MODAL */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:500;align-items:center;justify-content:center;padding:24px;}
+.modal-box{background:white;border-radius:24px;padding:28px 24px;width:100%;max-width:340px;box-shadow:0 20px 60px rgba(0,0,0,0.35);}
+
+/* TOAST */
+#toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--acai);color:white;padding:12px 24px;border-radius:30px;font-weight:700;font-size:.85rem;opacity:0;pointer-events:none;transition:all .3s;z-index:9998;white-space:nowrap;box-shadow:var(--shadow);}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loadingOverlay">
+  <div class="load-logo">🌲</div>
+  <div class="load-txt">Pinheiro Açaí</div>
+  <div class="load-sub" id="loadSub">Carregando...</div>
+</div>
+
+<!-- LOGIN -->
+<div id="loginPage" class="login-page" style="display:none;">
+  <div class="login-logo">🌲</div>
+  <div class="login-brand">Pinheiro Açaí</div>
+  <div class="login-sub">Programa de Fidelidade</div>
+  <div class="login-card">
+    <h3>Entrar na sua conta</h3>
+    <input class="login-input" type="text" id="loginName" placeholder="👤 Seu nome completo">
+    <input class="login-input" type="tel" id="loginPhone" placeholder="📱 WhatsApp ex: 85912345678">
+    <button class="btn btn-primary" onclick="loginManual()">Entrar com WhatsApp</button>
+    <div class="login-divider">ou</div>
+    <button class="btn-google" onclick="loginGoogle()">
+      <span style="font-size:1.2rem;">🔵</span> Entrar com Google
+    </button>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="mainApp" style="display:none;">
+  <header class="site-header">
+    <div class="header-inner">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="logo-circle">🌲</div>
+        <div>
+          <div class="header-title">Pinheiro Açaí</div>
+          <div class="header-subtitle">Fidelidade</div>
+        </div>
+      </div>
+      <div class="header-pts" id="headerPts">⭐ 0 pts</div>
+    </div>
+  </header>
+
+  <div class="tab-nav">
+    <button class="tab-btn active" onclick="showPage('dash')">🏠 Início</button>
+    <button class="tab-btn" onclick="showPage('rewards')">🎁 Prêmios</button>
+    <button class="tab-btn" onclick="showPage('history');window._carregarHistorico&&window._carregarHistorico()">📋 Histórico</button>
+    <button class="tab-btn" onclick="showPage('ranking');window._carregarRanking&&window._carregarRanking()">🏆 Ranking</button>
+    <button class="tab-btn" onclick="showPage('qr')">📲 QR Code</button>
+    <button class="tab-btn" onclick="showPage('contact')">📞 Contato</button>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="page-dash" class="page active">
+    <div class="loyalty-card">
+      <div class="lc-top">
+        <div>
+          <div class="lc-name" id="cardName">–</div>
+          <div class="lc-since" id="cardSince">Membro desde –</div>
+        </div>
+        <div class="lc-badge gold" id="cardBadge">🥉 BRONZE</div>
+      </div>
+      <div class="lc-pts-big" id="cardPts">0</div>
+      <div class="lc-pts-label">pontos acumulados</div>
+      <div class="progress-wrap">
+        <div class="progress-labels">
+          <span id="progressLeft">0 pts</span>
+          <span id="progressRight">Próximo: 10 pts 🎯</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="mainProgressBar" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="lc-stats">
+        <div class="lc-stat"><div class="lc-stat-val" id="cardBuys">0</div><div class="lc-stat-lab">Compras</div></div>
+        <div class="lc-stat"><div class="lc-stat-val" id="cardSpent">R$0</div><div class="lc-stat-lab">Total gasto</div></div>
+        <div class="lc-stat"><div class="lc-stat-val" id="cardLast">–</div><div class="lc-stat-lab">Última compra</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🎯 Próxima Recompensa</div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div style="font-size:2.5rem;">🍇</div>
+        <div style="flex:1;">
+          <div style="font-family:'Poppins',sans-serif;font-weight:700;font-size:.95rem;margin-bottom:3px;" id="proximaNome">Açaí Pequeno Grátis</div>
+          <div style="font-size:.78rem;color:var(--text-muted);">Faltam <b id="ptsFaltam" style="color:var(--acai);">10 pontos</b></div>
+          <div style="height:8px;background:#eee;border-radius:10px;margin-top:8px;overflow:hidden;"><div id="proximaBar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--acai),var(--acai-light));border-radius:10px;transition:width 1s ease;"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+      <div style="background:var(--acai-pale);border-radius:var(--radius-sm);padding:16px;text-align:center;">
+        <div style="font-size:1.6rem;font-weight:900;font-family:'Poppins',sans-serif;color:var(--acai);" id="dashCompras">0</div>
+        <div style="font-size:.72rem;font-weight:700;color:var(--text-muted);margin-top:2px;">Compras feitas</div>
+      </div>
+      <div style="background:#e8fff0;border-radius:var(--radius-sm);padding:16px;text-align:center;">
+        <div style="font-size:1.6rem;font-weight:900;font-family:'Poppins',sans-serif;color:var(--verde-dark);" id="dashPontos">0</div>
+        <div style="font-size:.72rem;font-weight:700;color:var(--text-muted);margin-top:2px;">Pontos acumulados</div>
+      </div>
+    </div>
+
+    <div class="card" style="background:linear-gradient(135deg,#f0e8ff,#e8f0ff);">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="font-size:2rem;">🔗</div>
+        <div style="flex:1;">
+          <div style="font-family:'Poppins',sans-serif;font-weight:700;font-size:.88rem;margin-bottom:3px;">Indique um amigo!</div>
+          <div style="font-size:.75rem;color:var(--text-muted);">Ganhe <b>5 pontos bônus</b> por indicação</div>
+        </div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:14px;" onclick="compartilharIndicacao()">📤 Compartilhar meu link</button>
+    </div>
+  </div>
+
+  <!-- RECOMPENSAS -->
+  <div id="page-rewards" class="page">
+    <div class="section-header">
+      <div class="section-title">Recompensas</div>
+      <div class="section-pill" id="rewardPill">0 pts</div>
+    </div>
+    <div style="background:var(--acai-pale);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:16px;">
+      <div style="font-size:.78rem;font-weight:700;color:var(--acai);">💡 A cada R$10 gastos = 1 ponto</div>
+    </div>
+    <div class="reward-grid" id="rewardGrid"></div>
+    <div class="card" style="margin-top:8px;">
+      <div class="card-title">🎁 Para resgatar</div>
+      <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:14px;">Mostre seu QR Code na loja ou chame no WhatsApp!</p>
+      <button class="btn btn-wpp" onclick="abrirWhatsApp()">💬 Resgatar no WhatsApp</button>
+    </div>
+  </div>
+
+  <!-- HISTÓRICO -->
+  <div id="page-history" class="page">
+    <div class="section-header"><div class="section-title">Histórico de Compras</div></div>
+    <div class="card" style="padding:14px 0;overflow-x:auto;">
+      <table class="history-table" style="min-width:300px;">
+        <thead><tr><th>Data</th><th>Produto</th><th>Valor</th><th>Pts</th></tr></thead>
+        <tbody id="historyBody"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">Carregando...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- RANKING -->
+  <div id="page-ranking" class="page">
+    <div class="section-header"><div class="section-title">🏆 Ranking dos Campeões</div></div>
+    <div id="rankingList"><div style="text-align:center;padding:30px;color:var(--text-muted);">Carregando...</div></div>
+  </div>
+
+  <!-- QR CODE -->
+  <div id="page-qr" class="page">
+    <div class="section-title" style="margin-bottom:16px;text-align:center;">Meu QR Code</div>
+    <div class="card">
+      <div class="qr-wrap">
+        <div style="font-size:.82rem;color:var(--text-muted);font-weight:700;text-align:center;">Apresente na loja para acumular pontos</div>
+        <div class="qr-box"><canvas id="qrCanvas" width="180" height="180"></canvas></div>
+        <div class="qr-id" id="qrId">PIN-000000</div>
+        <button class="btn btn-primary" onclick="mostrarToast('QR Code salvo! 📱')">💾 Salvar imagem</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">📤 Link de indicação</div>
+      <div id="linkIndicacao" style="background:var(--acai-pale);border-radius:10px;padding:10px 14px;font-size:.8rem;color:var(--acai);margin-bottom:12px;word-break:break-all;">–</div>
+      <button class="btn btn-outline" onclick="compartilharIndicacao()">📤 Compartilhar no WhatsApp</button>
+    </div>
+  </div>
+
+  <!-- CONTATO -->
+  <div id="page-contact" class="page">
+    <div style="text-align:center;padding:28px 20px 20px;">
+      <div style="font-size:4rem;margin-bottom:8px;">🌲</div>
+      <div style="font-family:'Poppins',sans-serif;font-weight:900;font-size:1.6rem;color:var(--acai);margin-bottom:4px;">Pinheiro Açaí</div>
+      <div style="font-size:.85rem;color:var(--text-muted);margin-bottom:20px;">O melhor açaí de Fortaleza 🇧🇷</div>
+    </div>
+    <div class="info-item"><div class="info-icon">📱</div><div><div class="info-label">WhatsApp</div><div class="info-value">(85) 98420-6575</div></div></div>
+    <div class="info-item"><div class="info-icon">🏢</div><div><div class="info-label">CNPJ</div><div class="info-value">48.732.859/0001-11</div></div></div>
+    <div class="info-item"><div class="info-icon">⭐</div><div><div class="info-label">Fidelidade</div><div class="info-value">A cada R$10 = 1 ponto</div></div></div>
+    <button class="btn btn-wpp" style="margin-top:20px;" onclick="abrirWhatsApp()">💬 Falar no WhatsApp</button>
+    <button class="btn btn-outline" style="margin-top:10px;" onclick="fazerLogout()">🚪 Sair da conta</button>
+    <div style="text-align:center;margin-top:24px;font-size:.72rem;color:var(--text-muted);">Pinheiro Açaí © 2026 · CNPJ 48.732.859/0001-11<br>Todos os direitos reservados.</div>
+  </div>
+
+  <!-- BOTTOM NAV -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" onclick="showPage('dash')"><span class="nav-icon">🏠</span>Início</button>
+    <button class="nav-item" onclick="showPage('rewards')"><span class="nav-icon">🎁</span>Prêmios</button>
+    <button class="nav-item" onclick="showPage('qr')"><span class="nav-icon">📲</span>QR</button>
+    <button class="nav-item" onclick="showPage('contact')"><span class="nav-icon">📞</span>Contato</button>
+    <button class="nav-item" onclick="checkAdmin()" style="color:var(--acai);"><span class="nav-icon">⚙️</span><b>Admin</b></button>
+  </nav>
+</div>
+
+<!-- ADMIN PAGE -->
+<div id="adminPage" style="display:none;max-width:480px;margin:0 auto;padding:20px 16px calc(90px + env(safe-area-inset-bottom));">
+  <div class="admin-header">
+    <h2>⚙️ Painel Administrativo</h2>
+    <p style="font-size:.8rem;opacity:.8;margin-top:4px;">Pinheiro Açaí – Gestão de Fidelidade</p>
+  </div>
+  <div class="admin-grid">
+    <div class="admin-stat-card"><div class="stat-num" id="statClientes">–</div><div class="stat-lab">Clientes</div></div>
+    <div class="admin-stat-card"><div class="stat-num" id="statCompras">–</div><div class="stat-lab">Compras</div></div>
+    <div class="admin-stat-card"><div class="stat-num" id="statPontos">–</div><div class="stat-lab">Pontos ativos</div></div>
+    <div class="admin-stat-card"><div class="stat-num" id="statGasto">–</div><div class="stat-lab">Movimentado</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🛒 Registrar Compra</div>
+    <div class="admin-form">
+      <div class="form-group"><label class="form-label">Telefone do Cliente</label><input class="form-input" type="tel" id="adminPhone" placeholder="85912345678"></div>
+      <div class="form-group"><label class="form-label">Produto</label>
+        <select class="form-input form-select" id="adminProduct">
+          <option value="">Selecione o produto</option>
+          <option>Açaí 300ml – R$18</option>
+          <option>Açaí 500ml – R$25</option>
+          <option>Açaí 700ml – R$32</option>
+          <option>Combo Duplo – R$42</option>
+          <option>Combo Especial – R$55</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Valor (R$)</label><input class="form-input" type="number" id="adminValue" placeholder="Ex: 25.00"></div>
+      <button class="btn btn-green" onclick="adminRegistrarCompra()">✅ Confirmar Compra</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">👤 Cadastrar Cliente</div>
+    <div class="admin-form">
+      <div class="form-group"><label class="form-label">Nome completo</label><input class="form-input" type="text" id="newClientName" placeholder="Nome do cliente"></div>
+      <div class="form-group"><label class="form-label">Telefone / WhatsApp</label><input class="form-input" type="tel" id="newClientPhone" placeholder="85912345678"></div>
+      <button class="btn btn-primary" onclick="adminCadastrarCliente()">➕ Cadastrar Cliente</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">⭐ Pontos Manuais / Resgate</div>
+    <div class="admin-form">
+      <div class="form-group"><label class="form-label">Telefone do Cliente</label><input class="form-input" type="tel" id="manualPhone" placeholder="85912345678"></div>
+      <div class="form-group"><label class="form-label">Operação</label>
+        <select class="form-input form-select" id="manualOp">
+          <option value="add">Adicionar pontos</option>
+          <option value="remove">Resgatar prêmio / Remover pontos</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Quantidade de pontos</label><input class="form-input" type="number" id="manualPts" placeholder="Ex: 10"></div>
+      <button class="btn btn-primary" onclick="adminPontosManual()">💫 Aplicar</button>
+    </div>
+  </div>
+
+  <button class="btn btn-outline" style="margin-top:8px;" onclick="sairAdmin()">← Voltar ao app</button>
+  <nav class="bottom-nav">
+    <button class="nav-item" onclick="sairAdmin()"><span class="nav-icon">🏠</span>Voltar</button>
+    <button class="nav-item active"><span class="nav-icon">⚙️</span><b>Admin</b></button>
+  </nav>
+</div>
+
+<!-- MODAL ADMIN -->
+<div id="adminModal" class="modal-bg">
+  <div class="modal-box">
+    <div style="text-align:center;margin-bottom:20px;">
+      <div style="font-size:2.8rem;margin-bottom:8px;">🔐</div>
+      <div style="font-family:'Poppins',sans-serif;font-weight:800;font-size:1.1rem;color:var(--text);">Acesso do Dono</div>
+      <div style="font-size:.8rem;color:var(--text-muted);margin-top:5px;">Apenas o dono da loja tem acesso</div>
+    </div>
+    <input id="adminSenha" type="password" placeholder="🔑 Senha secreta" style="width:100%;border:2px solid var(--border);border-radius:12px;padding:13px 16px;font-family:'Nunito',sans-serif;font-size:16px;outline:none;margin-bottom:14px;color:var(--text);-webkit-appearance:none;appearance:none;display:block;">
+    <button class="btn btn-primary" onclick="confirmarAdmin()" style="margin-bottom:10px;">Entrar no Painel</button>
+    <button class="btn btn-outline" onclick="fecharModalAdmin()">Cancelar</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const SENHA_ADMIN = 'pinheiro2026';
+
+const RECOMPENSAS = [
+  { nome:'Açaí Pequeno', pts:10, icon:'🍇' },
+  { nome:'Açaí Médio',   pts:20, icon:'🍇' },
+  { nome:'Açaí Grande',  pts:30, icon:'🍇' },
+  { nome:'Combo Especial', pts:50, icon:'🎉' }
+];
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn,.nav-item').forEach(b => b.classList.remove('active'));
+  const p = document.getElementById('page-'+id);
+  if (p) p.classList.add('active');
+  if (id==='qr') desenharQR();
+  window.scrollTo(0,0);
+}
+
+function checkAdmin() {
+  document.getElementById('adminModal').style.display='flex';
+  setTimeout(()=>document.getElementById('adminSenha').focus(),150);
+}
+function fecharModalAdmin() {
+  document.getElementById('adminModal').style.display='none';
+  document.getElementById('adminSenha').value='';
+}
+function confirmarAdmin() {
+  if (document.getElementById('adminSenha').value===SENHA_ADMIN) {
+    fecharModalAdmin();
+    document.getElementById('mainApp').style.display='none';
+    document.getElementById('adminPage').style.display='block';
+    window.carregarStatsAdmin && window.carregarStatsAdmin();
+    mostrarToast('✅ Bem-vindo ao painel Admin!');
+    window.scrollTo(0,0);
+  } else {
+    document.getElementById('adminSenha').style.borderColor='red';
+    mostrarToast('❌ Senha incorreta!');
+    setTimeout(()=>document.getElementById('adminSenha').style.borderColor='',1500);
+  }
+}
+function sairAdmin() {
+  document.getElementById('adminPage').style.display='none';
+  document.getElementById('mainApp').style.display='block';
+  window.scrollTo(0,0);
+}
+document.addEventListener('keydown', e => {
+  if (e.key==='Enter' && document.getElementById('adminModal').style.display==='flex') confirmarAdmin();
+});
+
+window.atualizarUI = function() {
+  const c = window._cliente; if (!c) return;
+  const pts = c.pontos||0;
+  document.getElementById('cardName').textContent  = c.nome||'–';
+  document.getElementById('cardSince').textContent = 'Membro desde '+(c.cadastro||'–');
+  document.getElementById('cardPts').textContent   = pts;
+  document.getElementById('cardBuys').textContent  = c.compras||0;
+  document.getElementById('cardSpent').textContent = 'R$'+(c.totalGasto||0);
+  document.getElementById('cardLast').textContent  = c.ultimaCompra||'–';
+  document.getElementById('headerPts').textContent = '⭐ '+pts+' pts';
+  document.getElementById('dashCompras').textContent = c.compras||0;
+  document.getElementById('dashPontos').textContent  = pts;
+
+  const badge = document.getElementById('cardBadge');
+  if (pts>=50)     { badge.textContent='💎 DIAMANTE'; badge.className='lc-badge gold'; }
+  else if (pts>=30){ badge.textContent='🥇 OURO';     badge.className='lc-badge gold'; }
+  else if (pts>=15){ badge.textContent='🥈 PRATA';    badge.className='lc-badge'; }
+  else             { badge.textContent='🥉 BRONZE';   badge.className='lc-badge'; }
+
+  const prox  = RECOMPENSAS.find(r=>r.pts>pts)||RECOMPENSAS[RECOMPENSAS.length-1];
+  const faltam= Math.max(0,prox.pts-pts);
+  const pct   = Math.min(100,Math.round((pts/prox.pts)*100));
+  document.getElementById('proximaNome').textContent   = prox.nome+' Grátis';
+  document.getElementById('ptsFaltam').textContent     = faltam+' pontos';
+  document.getElementById('proximaBar').style.width    = pct+'%';
+  document.getElementById('progressLeft').textContent  = pts+' pts';
+  document.getElementById('progressRight').textContent = 'Próximo: '+prox.pts+' pts 🎯';
+  document.getElementById('mainProgressBar').style.width = pct+'%';
+
+  const pill = document.getElementById('rewardPill');
+  if (pill) pill.textContent = pts+' pts disponíveis';
+  const grid = document.getElementById('rewardGrid');
+  if (grid) {
+    grid.innerHTML = RECOMPENSAS.map(r=>{
+      const ok=pts>=r.pts, p=Math.min(100,Math.round((pts/r.pts)*100)), falta=Math.max(0,r.pts-pts);
+      return `<div class="reward-card${ok?' unlocked':''}">
+        <div class="reward-icon">${r.icon}</div>
+        <div class="reward-name">${r.nome}</div>
+        <div class="reward-pts">${r.pts} pontos</div>
+        <div class="reward-progress-bar"><div class="reward-progress-fill" style="width:${p}%"></div></div>
+        <div style="font-size:.65rem;font-weight:700;margin-top:4px;color:${ok?'var(--verde-dark)':'var(--text-muted)'};">${ok?'✓ Disponível!':falta+' pts restantes'}</div>
+      </div>`;
+    }).join('');
+  }
+
+  const uid = window._uid||'guest';
+  const lnk = document.getElementById('linkIndicacao');
+  if (lnk) lnk.textContent='pinheiroacao.app/convite/'+uid.substring(0,8);
+  desenharQR();
+};
+
+function desenharQR() {
+  const canvas=document.getElementById('qrCanvas'); if(!canvas)return;
+  const ctx=canvas.getContext('2d'), size=180, cells=21, cs=size/cells;
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,size,size);
+  ctx.fillStyle='#6A0DAD';
+  const uid=window._uid||'guest';
+  const seed=uid.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  for(let r=0;r<cells;r++) for(let c=0;c<cells;c++) if(Math.sin((r*13+c*7+seed)*0.5)>0.1) ctx.fillRect(c*cs,r*cs,cs,cs);
+  [[0,0],[1,0],[0,1]].forEach(([ci,ri])=>{
+    const x=ci*(cells-7)*cs, y=ri*(cells-7)*cs;
+    ctx.fillStyle='#6A0DAD'; ctx.fillRect(x,y,7*cs,7*cs);
+    ctx.fillStyle='#fff';    ctx.fillRect(x+cs,y+cs,5*cs,5*cs);
+    ctx.fillStyle='#6A0DAD'; ctx.fillRect(x+2*cs,y+2*cs,3*cs,3*cs);
+  });
+  const el=document.getElementById('qrId');
+  if(el) el.textContent='PIN-'+uid.substring(0,8).toUpperCase();
+}
+
+function mostrarToast(msg) {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2800);
+}
+function mostrarLoading(msg) {
+  document.getElementById('loadSub').textContent=msg||'Aguarde...';
+  document.getElementById('loadingOverlay').style.display='flex';
+}
+function esconderLoading() { document.getElementById('loadingOverlay').style.display='none'; }
+function abrirWhatsApp()   { window.open('https://wa.me/5585984206575?text=Olá%20Pinheiro%20Açaí!%20Quero%20ver%20minha%20fidelidade%20🌲','_blank'); }
+function compartilharIndicacao() {
+  const uid=window._uid||'guest';
+  const txt='Oi! Venha provar o melhor açaí de Fortaleza! 🌲 Cadastre-se: pinheiroacao.app/convite/'+uid.substring(0,8);
+  if(navigator.share) navigator.share({title:'Pinheiro Açaí',text:txt});
+  else navigator.clipboard.writeText(txt).then(()=>mostrarToast('Link copiado! 📋'));
+}
+
+window.mostrarToast    = mostrarToast;
+window.mostrarLoading  = mostrarLoading;
+window.esconderLoading = esconderLoading;
+</script>
+</body>
+</html>
