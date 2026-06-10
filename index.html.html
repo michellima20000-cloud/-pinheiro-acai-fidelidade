@@ -443,7 +443,6 @@ body{font-family:'Nunito',sans-serif;background:var(--off-white);color:var(--tex
     <button class="tab-btn" onclick="showPage('rewards')">🎁 Prêmios</button>
     <button class="tab-btn" onclick="showPage('history');window._carregarHistorico&&window._carregarHistorico()">📋 Histórico</button>
     <button class="tab-btn" onclick="showPage('ranking');window._carregarRanking&&window._carregarRanking()">🏆 Ranking</button>
-    <button class="tab-btn" onclick="showPage('qr')">📲 QR Code</button>
     <button class="tab-btn" onclick="showPage('contact')">📞 Contato</button>
   </div>
 
@@ -544,21 +543,47 @@ body{font-family:'Nunito',sans-serif;background:var(--off-white);color:var(--tex
     <div id="rankingList"><div style="text-align:center;padding:30px;color:var(--text-muted);">Carregando...</div></div>
   </div>
 
-  <!-- QR CODE -->
+  <!-- MEUS PONTOS (substituiu QR) -->
   <div id="page-qr" class="page">
-    <div class="section-title" style="margin-bottom:16px;text-align:center;">Meu QR Code</div>
-    <div class="card">
-      <div class="qr-wrap">
-        <div style="font-size:.82rem;color:var(--text-muted);font-weight:700;text-align:center;">Apresente na loja para acumular pontos</div>
-        <div class="qr-box"><canvas id="qrCanvas" width="180" height="180"></canvas></div>
-        <div class="qr-id" id="qrId">PIN-000000</div>
-        <button class="btn btn-primary" onclick="mostrarToast('QR Code salvo! 📱')">💾 Salvar imagem</button>
+    <div class="section-title" style="margin-bottom:16px;text-align:center;">Meus Pontos</div>
+    <div class="card" style="background:linear-gradient(135deg,var(--acai-dark),var(--acai));color:white;text-align:center;padding:30px 20px;">
+      <div style="font-size:0.85rem;opacity:0.8;margin-bottom:8px;">SEU SALDO ATUAL</div>
+      <div style="font-family:Poppins,sans-serif;font-size:3.5rem;font-weight:900;" id="meusPontosGrande">0</div>
+      <div style="font-size:0.9rem;opacity:0.8;margin-top:4px;">pontos acumulados</div>
+      <div style="margin-top:16px;background:rgba(255,255,255,0.15);border-radius:12px;padding:12px;">
+        <div style="font-size:0.78rem;opacity:0.8;">Mostre esta tela ao funcionário na loja</div>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">📤 Link de indicação</div>
-      <div id="linkIndicacao" style="background:var(--acai-pale);border-radius:10px;padding:10px 14px;font-size:.8rem;color:var(--acai);margin-bottom:12px;word-break:break-all;">–</div>
-      <button class="btn btn-outline" onclick="compartilharIndicacao()">📤 Compartilhar no WhatsApp</button>
+      <div class="card-title">📋 Seu cadastro</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-muted);font-size:0.85rem;">Nome</span>
+          <span style="font-weight:700;font-size:0.85rem;" id="perfilNome">–</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-muted);font-size:0.85rem;">Telefone</span>
+          <span style="font-weight:700;font-size:0.85rem;" id="perfilFone">–</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-muted);font-size:0.85rem;">Membro desde</span>
+          <span style="font-weight:700;font-size:0.85rem;" id="perfilCadastro">–</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-muted);font-size:0.85rem;">Status</span>
+          <span style="font-weight:700;font-size:0.85rem;" id="perfilStatus">🥉 Bronze</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="background:linear-gradient(135deg,#f0e8ff,#e8f0ff);">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="font-size:2rem;">🔗</div>
+        <div style="flex:1;">
+          <div style="font-family:Poppins,sans-serif;font-weight:700;font-size:.88rem;margin-bottom:3px;">Indique um amigo!</div>
+          <div style="font-size:.75rem;color:var(--text-muted);">Ganhe <b>5 pontos bônus</b> por indicação</div>
+        </div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:14px;" onclick="compartilharIndicacao()">📤 Compartilhar no WhatsApp</button>
     </div>
   </div>
 
@@ -581,7 +606,7 @@ body{font-family:'Nunito',sans-serif;background:var(--off-white);color:var(--tex
   <nav class="bottom-nav">
     <button class="nav-item active" onclick="showPage('dash')"><span class="nav-icon">🏠</span>Início</button>
     <button class="nav-item" onclick="showPage('rewards')"><span class="nav-icon">🎁</span>Prêmios</button>
-    <button class="nav-item" onclick="showPage('qr')"><span class="nav-icon">📲</span>QR</button>
+    <button class="nav-item" onclick="showPage('ranking');window._carregarRanking&&window._carregarRanking()"><span class="nav-icon">🏆</span>Ranking</button>
     <button class="nav-item" onclick="checkAdmin()" style="color:var(--acai);"><span class="nav-icon">⚙️</span><b>Admin</b></button>
     <button class="nav-item" onclick="confirmarSaida()" style="color:#c0392b;"><span class="nav-icon">🚪</span><b>Sair</b></button>
   </nav>
@@ -761,10 +786,22 @@ window.atualizarUI = function() {
     }).join('');
   }
 
-  const uid = window._uid||'guest';
-  const lnk = document.getElementById('linkIndicacao');
-  if (lnk) lnk.textContent='pinheiroacao.app/convite/'+uid.substring(0,8);
-  desenharQR();
+  // Perfil page
+  const pNome = document.getElementById('perfilNome');
+  const pFone = document.getElementById('perfilFone');
+  const pCad  = document.getElementById('perfilCadastro');
+  const pStat = document.getElementById('perfilStatus');
+  const mPts  = document.getElementById('meusPontosGrande');
+  if (pNome) pNome.textContent = c.nome||'–';
+  if (pFone) pFone.textContent = c.fone||'–';
+  if (pCad)  pCad.textContent  = c.cadastro||'–';
+  if (mPts)  mPts.textContent  = pts;
+  if (pStat) {
+    if (pts>=50)      pStat.textContent='💎 Diamante';
+    else if (pts>=30) pStat.textContent='🥇 Ouro';
+    else if (pts>=15) pStat.textContent='🥈 Prata';
+    else              pStat.textContent='🥉 Bronze';
+  }
 };
 
 function desenharQR() {
@@ -801,12 +838,23 @@ function mostrarLoading(msg) {
   document.getElementById('loadingOverlay').style.display='flex';
 }
 function esconderLoading() { document.getElementById('loadingOverlay').style.display='none'; }
-function abrirWhatsApp()   { window.open('https://wa.me/5585984206575?text=Olá%20Pinheiro%20Açaí!%20Quero%20ver%20minha%20fidelidade%20🌲','_blank'); }
+function abrirWhatsApp()   { var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  var wppLink = isMobile 
+    ? 'whatsapp://send?phone=5585984206575&text=Ol%C3%A1%20Pinheiro%20A%C3%A7a%C3%AD!%20Quero%20ver%20minha%20fidelidade%20%F0%9F%8C%B2'
+    : 'https://web.whatsapp.com/send?phone=5585984206575&text=Ol%C3%A1%20Pinheiro%20A%C3%A7a%C3%AD!%20Quero%20ver%20minha%20fidelidade%20%F0%9F%8C%B2';
+  window.open(wppLink, '_blank'); }
 function compartilharIndicacao() {
   const uid=window._uid||'guest';
   const txt='Oi! Venha provar o melhor açaí de Fortaleza! 🌲 Cadastre-se: pinheiroacao.app/convite/'+uid.substring(0,8);
-  if(navigator.share) navigator.share({title:'Pinheiro Açaí',text:txt});
-  else navigator.clipboard.writeText(txt).then(()=>mostrarToast('Link copiado! 📋'));
+  if(navigator.share) {
+    navigator.share({title:'Pinheiro Açaí', text:txt});
+  } else {
+    var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    var wppLink = isMobile
+      ? 'whatsapp://send?text=' + encodeURIComponent(txt)
+      : 'https://web.whatsapp.com/send?text=' + encodeURIComponent(txt);
+    window.open(wppLink, '_blank');
+  }
 }
 
 window.mostrarToast    = mostrarToast;
