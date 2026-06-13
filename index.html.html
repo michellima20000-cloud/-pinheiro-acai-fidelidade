@@ -127,18 +127,36 @@ window._carregarHistorico = async () => {
   const tbody = document.getElementById('historyBody');
   if (!tbody) return;
   try {
-    const q    = query(collection(db,'compras'), where('uid','==',window._uid), orderBy('data','desc'));
+    // Busca simples sem orderBy para não precisar de índice composto
+    const q    = query(collection(db,'compras'), where('uid','==',window._uid));
     const snap = await getDocs(q);
-    if (snap.empty) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#6b5b8a;">Nenhuma compra ainda</td></tr>'; return; }
-    tbody.innerHTML = snap.docs.map(d => {
-      const c = d.data();
-      const dt = c.data?.toDate ? c.data.toDate().toLocaleDateString('pt-BR') : (c.dataStr||'-');
-      const badge = c.pontos >= 0
-        ? `<span class="pts-badge">+${c.pontos}</span>`
-        : `<span class="pts-badge" style="background:#ffe8e8;color:#c0392b;">${c.pontos}</span>`;
-      return `<tr><td><span class="date-chip">${dt}</span></td><td><span class="product-chip">${c.produto||'-'}</span></td><td>R$${Number(c.valor||0).toFixed(2).replace('.',',')}</td><td>${badge}</td></tr>`;
+    if (snap.empty) { 
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#6b5b8a;">Nenhuma compra ainda 🛒</td></tr>'; 
+      return; 
+    }
+    // Ordenar no cliente por dataStr
+    const docs = snap.docs.map(d => d.data()).sort((a,b) => {
+      const da = a.dataStr ? a.dataStr.split('/').reverse().join('') : '0';
+      const db2 = b.dataStr ? b.dataStr.split('/').reverse().join('') : '0';
+      return db2.localeCompare(da);
+    });
+    tbody.innerHTML = docs.map(c => {
+      const dt = c.dataStr || (c.data?.toDate ? c.data.toDate().toLocaleDateString('pt-BR') : '-');
+      const pts = Number(c.pontos||0);
+      const badge = pts >= 0
+        ? \`<span class="pts-badge">+\${pts}</span>\`
+        : \`<span class="pts-badge" style="background:#ffe8e8;color:#c0392b;">\${pts}</span>\`;
+      return \`<tr>
+        <td><span class="date-chip">\${dt}</span></td>
+        <td><span class="product-chip">\${c.produto||'-'}</span></td>
+        <td>R$\${Number(c.valor||0).toFixed(2).replace('.',',')}</td>
+        <td>\${badge}</td>
+      </tr>\`;
     }).join('');
-  } catch(e) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#c0392b;">Erro ao carregar</td></tr>'; }
+  } catch(e) { 
+    console.log('Erro historico:', e);
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#c0392b;">Erro: ' + e.message + '</td></tr>'; 
+  }
 };
 
 // ── RANKING ──
@@ -146,19 +164,29 @@ window._carregarRanking = async () => {
   const div = document.getElementById('rankingList');
   if (!div) return;
   try {
-    const q    = query(collection(db,'clientes'), orderBy('pontos','desc'));
-    const snap = await getDocs(q);
+    // Busca todos e ordena no cliente
+    const snap = await getDocs(collection(db,'clientes'));
+    const todos = snap.docs.map(d => ({id: d.id, ...d.data()}))
+      .sort((a,b) => (b.pontos||0) - (a.pontos||0))
+      .slice(0,10);
     const medals = ['🥇','🥈','🥉'];
-    div.innerHTML = snap.docs.slice(0,10).map((d,i) => {
-      const c = d.data(), isMe = d.id === window._uid;
-      return `<div class="ranking-item${isMe?' minha-pos':''}">
-        <div class="rank-number">${medals[i]||i+1+'°'}</div>
-        <div class="rank-avatar${isMe?' meu-avatar':''}">${c.nome.substring(0,2).toUpperCase()}</div>
-        <div class="rank-info"><div class="rank-name">${c.nome}${isMe?' (você)':''}</div><div class="rank-detail">${c.compras||0} compras · R$${c.totalGasto||0}</div></div>
-        <div class="rank-pts-badge">${c.pontos||0} pts</div>
-      </div>`;
+    div.innerHTML = todos.map((c,i) => {
+      const isMe = c.id === window._uid;
+      return \`<div class="ranking-item\${isMe?' minha-pos':''}">
+        <div class="rank-number">\${medals[i]||(i+1)+'°'}</div>
+        <div class="rank-avatar\${isMe?' meu-avatar':''}">\${(c.nome||'??').substring(0,2).toUpperCase()}</div>
+        <div class="rank-info">
+          <div class="rank-name">\${c.nome||'-'}\${isMe?' (você)':''}</div>
+          <div class="rank-detail">\${c.compras||0} compras · R$\${c.totalGasto||0}</div>
+        </div>
+        <div class="rank-pts-badge">\${c.pontos||0} pts</div>
+      </div>\`;
     }).join('');
-  } catch(e) { div.innerHTML = '<p style="text-align:center;padding:20px;color:#c0392b;">Erro ao carregar ranking</p>'; }
+    if (todos.length === 0) div.innerHTML = '<p style="text-align:center;padding:20px;color:#6b5b8a;">Nenhum cliente ainda</p>';
+  } catch(e) { 
+    console.log('Erro ranking:', e);
+    div.innerHTML = '<p style="text-align:center;padding:20px;color:#c0392b;">Erro: ' + e.message + '</p>'; 
+  }
 };
 
 // ── ADMIN: REGISTRAR COMPRA ──
